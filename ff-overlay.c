@@ -15,24 +15,20 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
+#include "conversion.h"
+
 #define eprintf(...) fprintf(stderr, __VA_ARGS__)
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 #define MAX(x, y) (((x) > (y)) ? (x) : (y))
 
-typedef struct {
-	unsigned short r, g, b, a;
-} pixel;
-
-typedef unsigned char byte;
-
 // IO helpers.
-static inline void chew(FILE* file, byte* buffer, size_t bytes) {
+static inline void chew(FILE* file, void* buffer, size_t bytes) {
 	if (!fread(buffer, bytes, 1, file)) {
 		eprintf("wanted more bytes, didn't get any?\n");
 		exit(1);
 	}
 }
-static inline void spew(FILE* file, byte* buffer, size_t bytes) {
+static inline void spew(FILE* file, void* buffer, size_t bytes) {
 	if (file)
 		if (!fwrite(buffer, bytes, 1, file)) {
 			eprintf("write failed.\n");
@@ -41,7 +37,7 @@ static inline void spew(FILE* file, byte* buffer, size_t bytes) {
 }
 
 static void ffparse(FILE* food, FILE* out, uint32_t* w, uint32_t* h) {
-	byte buf[8];
+	char buf[8];
 	chew(food, buf, 8);
 	if (strncmp(buf, "farbfeld", 8) != 0) {
 		eprintf("file is not a farbfeld image?\n");
@@ -83,17 +79,46 @@ int main(int argc, char* argv[]) {
 	unsigned int eh = MIN(h, sh + oh);
 
 	// dinner time.
-	byte buf[8];
-	byte obuf[8];
-	pixel* px = (pixel*) obuf;
+	uint16_t buf[4];
+  uint16_t obuf[4];
 	uint32_t x, y;
+	FP bs[4];
+	FP os[4];
+	uint16_t oa, ba, a;
+	uint16_t or, og, ob;
+	uint16_t br, bg, bb;
+
 	for (y = 0; y < h; y++) {
 		for (x = 0; x < w; x++) {
 			// nom.
 			chew(stdin, buf, 8);
 			if (sh <= y && eh > y && sw <= x && ew > x) {
 				chew(overlay, obuf, 8);
-				if (px->a) {
+				if (obuf[3]) { // not 0 behaves the same in BE as in LE.
+#ifdef DOCONVERT
+					qbeush2ush(buf, buf);
+					qbeush2ush(obuf, obuf);
+#endif
+					qush2fp(buf, bs);
+					qush2fp(obuf, os);
+					srgb2rgb(bs, bs);
+					srgb2rgb(os, os);
+
+					// blend alpha
+					oa = os[3];
+					ba = bs[3];
+					a = oa + ba * (1 - oa);
+
+					// blend colors.
+					os[0] = (os[0]*oa + bs[0]*ba * (1 - oa)) / a;
+					os[1] = (os[1]*oa + bs[1]*ba * (1 - oa)) / a;
+					os[2] = (os[2]*oa + bs[2]*ba * (1 - oa)) / a;
+
+					rgb2srgb(os, os);
+					qfp2ush(os, obuf);
+#ifdef DOCONVERT
+					qush2beush(obuf, obuf);
+#endif
 					spew(stdout, obuf, 8);
 					continue;
 				}
